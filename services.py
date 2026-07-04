@@ -6,6 +6,10 @@ from typing import List, Optional
 from utils import slugify, extract_title_from_filename
 from schemas import NoteListItem, NoteResponse, UploadResponse
 
+
+import markdown
+from pygments.formatters import HtmlFormatter
+
 class NoteService:
     @staticmethod
     def save_uploaded_file(file: UploadFile, content: bytes) -> UploadResponse:
@@ -86,7 +90,6 @@ class NoteService:
                 if os.path.isfile(item) and (item.endswith(".md") or item.endswith(".markdown")):
                     filepath = os.path.join(".", item)
                     
-                    
                     base_name, _ = os.path.splitext(item)
                     json_filepath = f"{base_name}.json"
                     
@@ -103,7 +106,6 @@ class NoteService:
                                 created_at_str = meta.get("created_at")
                         except Exception:
                             pass
-                    
                     
                     if not created_at_str:
                         created_at_epoch = os.path.getctime(filepath)
@@ -136,7 +138,6 @@ class NoteService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao listar os arquivos: {str(e)}")
 
-    
         reverse_order = (order == "desc")
         if sort_by == "title":
             notes_list.sort(key=lambda x: x.title.lower(), reverse=reverse_order)
@@ -144,3 +145,145 @@ class NoteService:
             notes_list.sort(key=lambda x: x.created_at, reverse=reverse_order)
 
         return notes_list
+
+    
+    @staticmethod
+    def render_note_to_html(filename: str) -> str:
+        
+        if os.path.basename(filename) != filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Nome de arquivo inválido para operações de leitura."
+            )
+            
+        if not (filename.endswith(".md") or filename.endswith(".markdown")):
+            raise HTTPException(
+                status_code=400,
+                detail="Apenas arquivos .md ou .markdown podem ser renderizados."
+            )
+            
+        if not os.path.isfile(filename):
+            raise HTTPException(
+                status_code=404,
+                detail="Arquivo de nota não localizado."
+            )
+            
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Não foi possível ler o arquivo solicitado: {str(e)}"
+            )
+
+        
+        html_body = markdown.markdown(
+            content,
+            extensions=[
+                "markdown.extensions.extra",      # Tabelas, fenced code blocks, etc.
+                "markdown.extensions.codehilite"   # Syntax highlighting
+            ],
+            extension_configs={
+                "markdown.extensions.codehilite": {
+                    "css_class": "codehilite",
+                    "use_pygments": True
+                }
+            }
+        )
+
+        
+        pygments_css = HtmlFormatter(style="github").get_style_defs(".codehilite")
+
+        
+        full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{extract_title_from_filename(filename)}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            word-wrap: break-word;
+            max-width: 850px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background-color: #ffffff;
+            color: #24292e;
+        }}
+        h1, h2, h3, h4, h5, h6 {{
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+            padding-bottom: 0.3em;
+            border-bottom: 1px solid #eaecef;
+        }}
+        a {{
+            color: #0366d6;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+        p, blockquote, ul, ol, dl, table, pre {{
+            margin-top: 0;
+            margin-bottom: 16px;
+        }}
+        code {{
+            padding: 0.2em 0.4em;
+            margin: 0;
+            font-size: 85%;
+            background-color: rgba(27,31,35,0.05);
+            border-radius: 3px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        }}
+        pre {{
+            padding: 16px;
+            overflow: auto;
+            font-size: 85%;
+            line-height: 1.45;
+            background-color: #f6f8fa;
+            border-radius: 3px;
+        }}
+        pre code {{
+            background-color: transparent;
+            padding: 0;
+            font-size: 100%;
+        }}
+        blockquote {{
+            padding: 0 1em;
+            color: #6a737d;
+            border-left: 0.25em solid #dfe2e5;
+        }}
+        table {{
+            border-spacing: 0;
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 0;
+            margin-bottom: 16px;
+        }}
+        table th, table td {{
+            padding: 6px 13px;
+            border: 1px solid #dfe2e5;
+        }}
+        table tr {{
+            background-color: #fff;
+            border-top: 1px solid #c6cbd1;
+        }}
+        table tr:nth-child(even) {{
+            background-color: #f6f8fa;
+        }}
+        /* Pygments CSS dinâmico */
+        {pygments_css}
+    </style>
+</head>
+<body>
+    {html_body}
+</body>
+</html>
+"""
+        return full_html

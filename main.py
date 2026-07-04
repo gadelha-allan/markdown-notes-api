@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from typing import List, Optional
 from schemas import (
     UploadResponse,
@@ -15,7 +16,7 @@ from services import NoteService
 app = FastAPI(
     title="API de Notas Markdown",
     description="API para gerenciamento, validação e verificação gramatical de notas em Markdown.",
-    version="0.5.1"
+    version="0.6.0"
 )
 
 @app.get("/health")
@@ -75,3 +76,8 @@ def list_notes(
         raise HTTPException(status_code=400, detail="O parâmetro 'order' deve ser 'asc' ou 'desc'.")
         
     return NoteService.list_notes(sort_by=sort_by, order=order, q=q)
+
+
+@app.get("/notes/{filename}/html", response_class=HTMLResponse)
+def get_note_html(filename: str):
+    return NoteService.render_note_to_html(filename)
