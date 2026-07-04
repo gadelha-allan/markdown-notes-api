@@ -4,15 +4,27 @@ from datetime import datetime
 from fastapi import HTTPException, UploadFile
 from typing import List, Optional
 from utils import slugify, extract_title_from_filename
-from schemas import NoteListItem, NoteResponse, UploadResponse
-
+from schemas import NoteListItem, NoteResponse, UploadResponse, DeleteResponse
 
 import markdown
 from pygments.formatters import HtmlFormatter
 
+MAX_FILE_SIZE = 5 * 1024 * 1024
+DATA_DIR = "data"
+
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
 class NoteService:
     @staticmethod
     def save_uploaded_file(file: UploadFile, content: bytes) -> UploadResponse:
+        
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail="O arquivo excede o tamanho máximo permitido de 5MB."
+            )
+            
         filename = file.filename
         if not (filename.endswith(".md") or filename.endswith(".markdown")):
             raise HTTPException(
@@ -20,7 +32,10 @@ class NoteService:
                 detail="Extensão de arquivo inválida. Apenas arquivos .md ou .markdown são aceitos."
             )
         
-        file_path = filename
+        
+        secure_filename = os.path.basename(filename)
+        file_path = os.path.join(DATA_DIR, secure_filename)
+        
         try:
             with open(file_path, "wb") as f:
                 f.write(content)
@@ -30,7 +45,7 @@ class NoteService:
                 detail=f"Erro interno ao salvar o arquivo: {str(e)}"
             )
         return UploadResponse(
-            filename=filename,
+            filename=secure_filename,
             path=os.path.abspath(file_path),
             size=len(content)
         )
@@ -43,6 +58,10 @@ class NoteService:
         
         md_filename = f"{base_name}.md"
         json_filename = f"{base_name}.json"
+        
+        md_filepath = os.path.join(DATA_DIR, md_filename)
+        json_filepath = os.path.join(DATA_DIR, json_filename)
+        
         created_at_str = datetime.now().isoformat()
         
         metadata = {
@@ -53,13 +72,13 @@ class NoteService:
         }
         
         try:
-            with open(md_filename, "w", encoding="utf-8") as md_file:
+            with open(md_filepath, "w", encoding="utf-8") as md_file:
                 md_file.write(content)
                 
-            with open(json_filename, "w", encoding="utf-8") as json_file:
+            with open(json_filepath, "w", encoding="utf-8") as json_file:
                 json.dump(metadata, json_file, ensure_ascii=False, indent=4)
         except Exception as e:
-            for path in [md_filename, json_filename]:
+            for path in [md_filepath, json_filepath]:
                 if os.path.exists(path):
                     os.remove(path)
             raise HTTPException(
@@ -86,12 +105,12 @@ class NoteService:
         notes_list = []
         
         try:
-            for item in os.listdir("."):
-                if os.path.isfile(item) and (item.endswith(".md") or item.endswith(".markdown")):
-                    filepath = os.path.join(".", item)
-                    
+            for item in os.listdir(DATA_DIR):
+                filepath = os.path.join(DATA_DIR, item)
+                
+                if os.path.isfile(filepath) and (item.endswith(".md") or item.endswith(".markdown")):
                     base_name, _ = os.path.splitext(item)
-                    json_filepath = f"{base_name}.json"
+                    json_filepath = os.path.join(DATA_DIR, f"{base_name}.json")
                     
                     title = extract_title_from_filename(item)
                     tags = []
@@ -146,10 +165,8 @@ class NoteService:
 
         return notes_list
 
-    
     @staticmethod
     def render_note_to_html(filename: str) -> str:
-        
         if os.path.basename(filename) != filename:
             raise HTTPException(
                 status_code=400,
@@ -161,15 +178,17 @@ class NoteService:
                 status_code=400,
                 detail="Apenas arquivos .md ou .markdown podem ser renderizados."
             )
-            
-        if not os.path.isfile(filename):
+        
+        filepath = os.path.join(DATA_DIR, filename)    
+        
+        if not os.path.isfile(filepath):
             raise HTTPException(
                 status_code=404,
                 detail="Arquivo de nota não localizado."
             )
             
         try:
-            with open(filename, "r", encoding="utf-8") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
         except Exception as e:
             raise HTTPException(
@@ -177,12 +196,11 @@ class NoteService:
                 detail=f"Não foi possível ler o arquivo solicitado: {str(e)}"
             )
 
-        
         html_body = markdown.markdown(
             content,
             extensions=[
-                "markdown.extensions.extra",      # Tabelas, fenced code blocks, etc.
-                "markdown.extensions.codehilite"   # Syntax highlighting
+                "markdown.extensions.extra",
+                "markdown.extensions.codehilite"
             ],
             extension_configs={
                 "markdown.extensions.codehilite": {
@@ -192,10 +210,8 @@ class NoteService:
             }
         )
 
-        
         pygments_css = HtmlFormatter(style="github").get_style_defs(".codehilite")
 
-        
         full_html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -214,70 +230,18 @@ class NoteService:
             background-color: #ffffff;
             color: #24292e;
         }}
-        h1, h2, h3, h4, h5, h6 {{
-            margin-top: 24px;
-            margin-bottom: 16px;
-            font-weight: 600;
-            line-height: 1.25;
-            padding-bottom: 0.3em;
-            border-bottom: 1px solid #eaecef;
-        }}
-        a {{
-            color: #0366d6;
-            text-decoration: none;
-        }}
-        a:hover {{
-            text-decoration: underline;
-        }}
-        p, blockquote, ul, ol, dl, table, pre {{
-            margin-top: 0;
-            margin-bottom: 16px;
-        }}
-        code {{
-            padding: 0.2em 0.4em;
-            margin: 0;
-            font-size: 85%;
-            background-color: rgba(27,31,35,0.05);
-            border-radius: 3px;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-        }}
-        pre {{
-            padding: 16px;
-            overflow: auto;
-            font-size: 85%;
-            line-height: 1.45;
-            background-color: #f6f8fa;
-            border-radius: 3px;
-        }}
-        pre code {{
-            background-color: transparent;
-            padding: 0;
-            font-size: 100%;
-        }}
-        blockquote {{
-            padding: 0 1em;
-            color: #6a737d;
-            border-left: 0.25em solid #dfe2e5;
-        }}
-        table {{
-            border-spacing: 0;
-            border-collapse: collapse;
-            width: 100%;
-            margin-top: 0;
-            margin-bottom: 16px;
-        }}
-        table th, table td {{
-            padding: 6px 13px;
-            border: 1px solid #dfe2e5;
-        }}
-        table tr {{
-            background-color: #fff;
-            border-top: 1px solid #c6cbd1;
-        }}
-        table tr:nth-child(even) {{
-            background-color: #f6f8fa;
-        }}
-        /* Pygments CSS dinâmico */
+        h1, h2, h3, h4, h5, h6 {{ margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; padding-bottom: 0.3em; border-bottom: 1px solid #eaecef; }}
+        a {{ color: #0366d6; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        p, blockquote, ul, ol, dl, table, pre {{ margin-top: 0; margin-bottom: 16px; }}
+        code {{ padding: 0.2em 0.4em; margin: 0; font-size: 85%; background-color: rgba(27,31,35,0.05); border-radius: 3px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }}
+        pre {{ padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; background-color: #f6f8fa; border-radius: 3px; }}
+        pre code {{ background-color: transparent; padding: 0; font-size: 100%; }}
+        blockquote {{ padding: 0 1em; color: #6a737d; border-left: 0.25em solid #dfe2e5; }}
+        table {{ border-spacing: 0; border-collapse: collapse; width: 100%; margin-top: 0; margin-bottom: 16px; }}
+        table th, table td {{ padding: 6px 13px; border: 1px solid #dfe2e5; }}
+        table tr {{ background-color: #fff; border-top: 1px solid #c6cbd1; }}
+        table tr:nth-child(even) {{ background-color: #f6f8fa; }}
         {pygments_css}
     </style>
 </head>
@@ -287,3 +251,43 @@ class NoteService:
 </html>
 """
         return full_html
+
+    @staticmethod
+    def delete_note(filename: str) -> DeleteResponse:
+        if os.path.basename(filename) != filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Nome de arquivo inválido para operações de remoção."
+            )
+            
+        if not (filename.endswith(".md") or filename.endswith(".markdown")):
+            raise HTTPException(
+                status_code=400,
+                detail="Apenas arquivos .md ou .markdown podem ser removidos."
+            )
+            
+        filepath = os.path.join(DATA_DIR, filename)
+            
+        if not os.path.isfile(filepath):
+            raise HTTPException(
+                status_code=404,
+                detail="Arquivo de nota não localizado para exclusão."
+            )
+            
+        try:
+            
+            os.remove(filepath)
+            
+
+            base_name, _ = os.path.splitext(filename)
+            json_filepath = os.path.join(DATA_DIR, f"{base_name}.json")
+            if os.path.exists(json_filepath):
+                os.remove(json_filepath)
+                
+            return DeleteResponse(message="Nota removida com sucesso.")
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Não foi possível remover o arquivo: {str(e)}"
+            )

@@ -34,3 +34,7 @@ class NoteListItem(BaseModel):
     title: str
     created_at: str
     size: int
+
+
+class DeleteResponse(BaseModel):
+    message: str
